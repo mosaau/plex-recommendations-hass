@@ -1,0 +1,22 @@
+{
+    "config": {
+      "step": {
+        "user": {
+          "title": "Connect to Plex Recommendations API",
+          "description": "Enter your Plex Recommendations API details",
+          "data": {
+            "api_url": "API URL (e.g., http://192.168.1.94:8000)",
+            "api_key": "API Key (optional but recommended)"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Failed to connect to the API. Check the URL and network connection.",
+        "invalid_auth": "Invalid API key. Check your configuration.",
+        "unknown": "Unexpected error occurred"
+      },
+      "abort": {
+        "already_configured": "This API is already configured"
+      }
+    }
+  }

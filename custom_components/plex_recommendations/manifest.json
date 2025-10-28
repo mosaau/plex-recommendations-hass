@@ -1,0 +1,11 @@
+{
+    "domain": "plex_recommendations",
+    "name": "Plex Recommendations",
+    "documentation": "https://github.com/mosaau/plex-recommendations-hass",
+    "issue_tracker": "https://github.com/mosaau/plex-recommendations-hass/issues",
+    "codeowners": ["@MOSAAU"],
+    "requirements": [],
+    "config_flow": true,
+    "version": "1.0.0",
+    "iot_class": "local_polling"
+  }
