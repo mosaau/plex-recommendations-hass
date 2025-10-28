@@ -10,12 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import (
-    DOMAIN,
-    CONF_API_URL,
-    CONF_API_KEY,
-    ENDPOINT_HEALTH,
-)
+from . import const
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +28,7 @@ async def validate_api(hass: HomeAssistant, api_url: str, api_key: str) -> dict[
     
     try:
         async with session.get(
-            f"{api_url}{ENDPOINT_HEALTH}",
+            f"{api_url}{const.ENDPOINT_HEALTH}",
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=10)
         ) as response:
@@ -50,7 +45,7 @@ async def validate_api(hass: HomeAssistant, api_url: str, api_key: str) -> dict[
         raise ValueError("Cannot connect to API") from err
 
 
-class PlexRecommendationsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class PlexRecommendationsConfigFlow(config_entries.ConfigFlow, domain=const.DOMAIN):
     """Handle a config flow for Plex Recommendations."""
 
     VERSION = 1
@@ -65,12 +60,12 @@ class PlexRecommendationsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 info = await validate_api(
                     self.hass,
-                    user_input[CONF_API_URL],
-                    user_input.get(CONF_API_KEY, "")
+                    user_input[const.CONF_API_URL],
+                    user_input.get(const.CONF_API_KEY, "")
                 )
                 
                 # Create unique ID based on API URL
-                await self.async_set_unique_id(user_input[CONF_API_URL])
+                await self.async_set_unique_id(user_input[const.CONF_API_URL])
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
@@ -94,8 +89,8 @@ class PlexRecommendationsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_API_URL, default="http://192.168.1.94:8000"): str,
-                    vol.Optional(CONF_API_KEY): str,
+                    vol.Required(const.CONF_API_URL, default="http://192.168.1.94:8000"): str,
+                    vol.Optional(const.CONF_API_KEY): str,
                 }
             ),
             errors=errors,
