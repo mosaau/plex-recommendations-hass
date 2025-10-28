@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, CONF_API_URL, CONF_API_KEY, ENDPOINT_USERS, DEFAULT_SCAN_INTERVAL
+from . import const
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ PLATFORMS = ["sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Plex Recommendations from a config entry."""
-    api_url = entry.data[CONF_API_URL].rstrip('/')
-    api_key = entry.data.get(CONF_API_KEY)
+    api_url = entry.data[const.CONF_API_URL].rstrip('/')
+    api_key = entry.data.get(const.CONF_API_KEY)
     
     coordinator = PlexRecommendationsDataUpdateCoordinator(
         hass, api_url, api_key
@@ -28,8 +28,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    hass.data.setdefault(const.DOMAIN, {})
+    hass.data[const.DOMAIN][entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -41,7 +41,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[const.DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 
@@ -58,8 +58,8 @@ class PlexRecommendationsDataUpdateCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            name=const.DOMAIN,
+            update_interval=timedelta(seconds=const.DEFAULT_SCAN_INTERVAL),
         )
 
     async def _async_update_data(self):
@@ -72,7 +72,7 @@ class PlexRecommendationsDataUpdateCoordinator(DataUpdateCoordinator):
             async with async_timeout.timeout(10):
                 # Fetch list of users
                 async with self.session.get(
-                    f"{self.api_url}{ENDPOINT_USERS}",
+                    f"{self.api_url}{const.ENDPOINT_USERS}",
                     headers=headers
                 ) as response:
                     if response.status != 200:
