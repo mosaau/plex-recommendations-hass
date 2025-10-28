@@ -84,8 +84,14 @@ class PlexRecommendationsSensor(CoordinatorEntity, SensorEntity):
             **self._data
         }
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
+    def _handle_coordinator_update(self) -> None:
+        """Called whenever the coordinator refreshes."""
+        # Refresh this sensor's per-user data when the user list updates
+        self.hass.async_create_task(self._fetch_data())
+        super()._handle_coordinator_update()
+
+    async def _fetch_data(self) -> None:
+        """Fetch per-user data for this sensor and update state."""
         api_url = self.coordinator.api_url
         headers = {}
         if self.coordinator.api_key:
@@ -94,23 +100,56 @@ class PlexRecommendationsSensor(CoordinatorEntity, SensorEntity):
         endpoint = (
             ENDPOINT_RECOMMENDATIONS if self._sensor_type == "recommendations"
             else ENDPOINT_RECENT
-        )
-        endpoint = endpoint.format(user_id=self._user_id)
+        ).format(user_id=self._user_id)
 
         try:
             async with async_timeout.timeout(10):
                 async with self.coordinator.session.get(
-                    f"{api_url}{endpoint}",
-                    headers=headers
+                    f"{api_url}{endpoint}", headers=headers
                 ) as response:
-                    if response.status == 200:
-                        self._data = await response.json()
-                    else:
+                    if response.status != 200:
                         _LOGGER.warning(
                             "Error fetching %s for %s: %s",
-                            self._sensor_type,
-                            self._user_id,
-                            response.status
+                            self._sensor_type, self._user_id, response.status
                         )
+                        return
+
+                    ctype = response.headers.get("Content-Type", "")
+
+                    # Handle JSON response
+                    if "application/json" in ctype:
+                        payload = await response.json()
+                    else:
+                        # Handle other formats (YAML, plain text)
+                        raw_text = await response.text()
+                        payload = None
+                        try:
+                            import yaml
+                            payload = yaml.safe_load(raw_text)
+                        except Exception:
+                            payload = None
+
+                        # Fallback: treat as newline list
+                        if payload is None:
+                            lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+                            payload = lines
+
+                    # Normalize into expected structure
+                    if isinstance(payload, dict):
+                        data_dict = payload
+                    elif isinstance(payload, list):
+                        key = ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT
+                        data_dict = {key: payload}
+                    else:
+                        key = ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT
+                        data_dict = {key: [str(payload)]}
+
+                    self._data = data_dict
+
         except aiohttp.ClientError as err:
             _LOGGER.error("Error updating sensor: %s", err)
+        except Exception as err:
+            _LOGGER.error("Unexpected error updating sensor: %s", err)
+
+        # Write state after any attempt
+        self.async_write_ha_state()

@@ -1,6 +1,7 @@
 """The Plex Recommendations integration."""
 import logging
 from datetime import timedelta
+from homeassistant.const import Platform
 
 import aiohttp
 import async_timeout
@@ -14,7 +15,7 @@ from . import const
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
