@@ -1,5 +1,8 @@
 """Sensor platform for Plex Recommendations."""
+import asyncio
 import logging
+import random
+import traceback
 from typing import Any
 
 import aiohttp
@@ -40,8 +43,6 @@ async def async_setup_entry(
             user_id = user.get("id")
             user_name = user.get("name", user_id)
             
-            _LOGGER.info("Creating sensors for user: %s (ID: %s)", user_name, user_id)
-            
             # Recommendations sensor
             entities.append(
                 PlexRecommendationsSensor(
@@ -73,53 +74,92 @@ class PlexRecommendationsSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = f"Plex {sensor_type.title()} {user_name}"
         self._attr_unique_id = f"plex_{sensor_type}_{user_id}"
         self._data = {}
-        
-        _LOGGER.info(
-            "Initialized sensor: %s (ID: %s, Type: %s)",
-            self._attr_name,
-            self._attr_unique_id,
-            sensor_type
-        )
 
     @property
     def state(self) -> int:
         """Return the state of the sensor."""
         if self._sensor_type == "recommendations":
-            count = len(self._data.get(ATTR_RECOMMENDATIONS, []))
-        else:
-            count = len(self._data.get(ATTR_RECENT, []))
-        
-        _LOGGER.debug("Sensor %s state: %d items", self._attr_name, count)
-        return count
+            return len(self._data.get(ATTR_RECOMMENDATIONS, []))
+        return len(self._data.get(ATTR_RECENT, []))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
-        attrs = {
-            ATTR_USER_ID: self._user_id,
-            **self._data
-        }
-        _LOGGER.debug("Sensor %s attributes keys: %s", self._attr_name, list(attrs.keys()))
-        return attrs
+        """Return the state attributes with improved formatting."""
+        try:
+            attrs = {
+                ATTR_USER_ID: self._user_id,
+            }
+
+            # Add generated_at if available
+            if ATTR_GENERATED_AT in self._data:
+                attrs[ATTR_GENERATED_AT] = self._data[ATTR_GENERATED_AT]
+
+            # Add the full data list
+            key = ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT
+            items = self._data.get(key, [])
+            attrs[key] = items
+
+            # Add convenient summary attributes for easy display
+            if items:
+                # Create a simple list of titles for quick viewing
+                attrs["titles"] = [item.get("title", "Unknown") for item in items[:10]]
+
+                # Add first 3 items as separate attributes for easy card access
+                for i, item in enumerate(items[:3], 1):
+                    try:
+                        prefix = f"item_{i}_"
+                        attrs[f"{prefix}title"] = item.get("title")
+                        attrs[f"{prefix}year"] = item.get("year")
+                        attrs[f"{prefix}type"] = item.get("type")
+                        attrs[f"{prefix}poster"] = item.get("poster_url")
+                        attrs[f"{prefix}deep_link"] = item.get("deep_link")
+                        attrs[f"{prefix}rating_key"] = item.get("plex_rating_key")
+                        if "reason" in item:
+                            attrs[f"{prefix}reason"] = item.get("reason")
+                        if "score" in item:
+                            attrs[f"{prefix}score"] = round(item.get("score", 0), 2)
+                        # Add percent_complete for recent watches (resume functionality)
+                        if "percent_complete" in item:
+                            attrs[f"{prefix}percent_complete"] = item.get("percent_complete")
+                    except Exception as item_err:
+                        _LOGGER.warning("Error processing item %d for %s: %s", i, self._attr_name, item_err)
+                        _LOGGER.debug("Problematic item data: %s", item)
+
+            # Add error if present
+            if "error" in self._data:
+                attrs["error"] = self._data["error"]
+
+            return attrs
+
+        except Exception as err:
+            _LOGGER.error("Error building attributes for %s: %s", self._attr_name, err)
+            _LOGGER.error("Full traceback: %s", traceback.format_exc())
+            _LOGGER.debug("Sensor data: %s", self._data)
+            return {
+                ATTR_USER_ID: self._user_id,
+                "error": f"Error building attributes: {str(err)}"
+            }
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Sensor is available even if API returns an error (we'll show 0 items)
         return True
 
     def _handle_coordinator_update(self) -> None:
         """Called whenever the coordinator refreshes."""
-        _LOGGER.debug("Coordinator update triggered for %s", self._attr_name)
-        # Refresh this sensor's per-user data when the user list updates
         self.hass.async_create_task(self._fetch_data())
         super()._handle_coordinator_update()
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         await super().async_added_to_hass()
-        # Fetch data immediately when sensor is added
-        _LOGGER.info("Sensor %s added to hass, fetching initial data", self._attr_name)
+
+        # Stagger initial fetches to avoid overwhelming the API
+        # Random delay between 0-5 seconds per sensor
+        delay = random.uniform(0, 5)
+        _LOGGER.debug("Sensor %s waiting %.1f seconds before initial fetch", self._attr_name, delay)
+        await asyncio.sleep(delay)
+
         await self._fetch_data()
 
     async def _fetch_data(self) -> None:
@@ -135,75 +175,24 @@ class PlexRecommendationsSensor(CoordinatorEntity, SensorEntity):
         ).format(user_id=self._user_id)
 
         url = f"{api_url}{endpoint}"
-        _LOGGER.info("Fetching data for %s from %s", self._attr_name, url)
 
         try:
-            async with async_timeout.timeout(10):
+            async with async_timeout.timeout(60):  # 60s timeout for initial Plex On Deck query (cached after first request)
                 async with self.coordinator.session.get(url, headers=headers) as response:
-                    _LOGGER.debug("Response status for %s: %d", self._attr_name, response.status)
-                    
                     if response.status == 200:
-                        ctype = response.headers.get("Content-Type", "")
-                        _LOGGER.debug("Content-Type: %s", ctype)
-
-                        # Handle JSON response
-                        if "application/json" in ctype:
-                            payload = await response.json()
-                            _LOGGER.info(
-                                "Received JSON data for %s: %d items",
-                                self._attr_name,
-                                len(payload.get(ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT, []))
-                            )
-                        else:
-                            # Handle other formats
-                            raw_text = await response.text()
-                            _LOGGER.debug("Received non-JSON response: %s", raw_text[:200])
-                            payload = None
-                            try:
-                                import yaml
-                                payload = yaml.safe_load(raw_text)
-                            except Exception:
-                                payload = None
-
-                            if payload is None:
-                                lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
-                                payload = lines
-
-                        # Normalize into expected structure
-                        if isinstance(payload, dict):
-                            self._data = payload
-                        elif isinstance(payload, list):
-                            key = ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT
-                            self._data = {key: payload}
-                        else:
-                            key = ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT
-                            self._data = {key: [str(payload)]}
-                        
-                        _LOGGER.info("Data successfully stored for %s", self._attr_name)
-                    
+                        self._data = await response.json()
                     elif response.status == 404:
-                        _LOGGER.warning("Endpoint not found for %s: %s", self._attr_name, url)
                         self._data = {
                             "error": "Endpoint not found",
                             ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT: []
                         }
-                    
                     else:
-                        # Try to get error message from response
                         try:
                             error_data = await response.json()
                             error_msg = error_data.get("detail", f"HTTP {response.status}")
                         except:
                             error_msg = f"HTTP {response.status}"
                         
-                        _LOGGER.warning(
-                            "Error fetching %s for %s: %s",
-                            self._sensor_type,
-                            self._user_id,
-                            error_msg
-                        )
-                        
-                        # Store error in data so user can see it
                         self._data = {
                             "error": error_msg,
                             ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT: []
@@ -211,17 +200,17 @@ class PlexRecommendationsSensor(CoordinatorEntity, SensorEntity):
 
         except aiohttp.ClientError as err:
             _LOGGER.error("Network error updating sensor %s: %s", self._attr_name, err)
+            _LOGGER.error("Full traceback: %s", traceback.format_exc())
             self._data = {
                 "error": f"Network error: {str(err)}",
                 ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT: []
             }
         except Exception as err:
-            _LOGGER.error("Unexpected error updating sensor %s: %s", self._attr_name, err, exc_info=True)
+            _LOGGER.error("Unexpected error updating sensor %s: %s", self._attr_name, err)
+            _LOGGER.error("Full traceback: %s", traceback.format_exc())
             self._data = {
                 "error": f"Unexpected error: {str(err)}",
                 ATTR_RECOMMENDATIONS if self._sensor_type == "recommendations" else ATTR_RECENT: []
             }
 
-        # Write state after any attempt
         self.async_write_ha_state()
-        _LOGGER.debug("State written for %s", self._attr_name)
